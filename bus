@@ -20,10 +20,13 @@ unlock()            { _lock u; }   # drop a lock
 # Simplest example is avoiding running multiple instances of script.
 exlock_now || exit 1
 
+
+dir_local=$(pwd)
+
 hora_atual=$(date +%H%M)
 data_atual=$(date +%Y%m%d)
 
-rm /home/openhabian/scripts/stmbus/crontab.temp
+rm "$dir_local/crontab.temp"
 channel=1
 real_time=0
 crontab_line=""
@@ -46,7 +49,7 @@ for horario in $BUS; do
 
                         if [ $channel -eq "1" ]; then
 				if [ $real_time -eq "0" ]; then
-					crontab_line="$minuto $hora * * * /home/openhabian/scripts/stmbus/bus 193 51132 W"
+					crontab_line="$minuto $hora * * * $dir_local/bus 193 51132 W"
 				fi
 			fi
 		else
@@ -57,7 +60,7 @@ for horario in $BUS; do
 			if [ $channel -eq "1" ]; then
 				real_time="1"
 #			 	if [ $((minuto)) -lt 15 ]
-					crontab_line="* * * * *  /home/openhabian/scripts/stmbus/bus 193 51132 W"
+					crontab_line="* * * * *  $dir_local/bus 193 51132 W"
 #				else
 #					minuto_atual=${hora_atual:2}
 #					hora_atual=${hora_atual:0:2}
@@ -72,11 +75,11 @@ done
 
 output=${output:1}
 
-echo "$output" >> /home/openhabian/scripts/stmbus/bus.log
-echo "$crontab_line" >> /home/openhabian/scripts/stmbus/bus.log
+echo "$output" >> "$dir_local/bus.log"
+echo "$crontab_line" >> "$dir_local/bus.log"
 
 MQTT=$(mosquitto_pub -t "bus/$1/$2" -m "$output" -q 1)
 
-echo "$crontab_line" >> /home/openhabian/scripts/stmbus/crontab.temp
-crontab /home/openhabian/scripts/stmbus/crontab.temp
+echo "$crontab_line" >> "$dir_local/crontab.temp"
+crontab "$dir_local/crontab.temp"
 
