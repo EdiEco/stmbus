@@ -1,0 +1,82 @@
+#!/bin/bash
+
+LOCKFILE="/var/lock/`basename $0`"
+LOCKFD=99
+ 
+# PRIVATE
+_lock()             { flock -$1 $LOCKFD; }
+_no_more_locking()  { _lock u; _lock xn && rm -f $LOCKFILE; }
+_prepare_locking()  { eval "exec $LOCKFD>\"$LOCKFILE\""; trap _no_more_locking EXIT; }
+ 
+# ON START
+_prepare_locking
+ 
+# PUBLIC
+exlock_now()        { _lock xn; }  # obtain an exclusive lock immediately or fail
+exlock()            { _lock x; }   # obtain an exclusive lock
+shlock()            { _lock s; }   # obtain a shared lock
+unlock()            { _lock u; }   # drop a lock
+ 
+# Simplest example is avoiding running multiple instances of script.
+exlock_now || exit 1
+
+hora_atual=$(date +%H%M)
+data_atual=$(date +%Y%m%d)
+
+rm /home/openhabian/scripts/stmbus/crontab.temp
+channel=1
+real_time=0
+crontab_line=""
+
+
+BUS=$(curl -H "Host: api.stm.info" -H "Connection: keep-alive" -H "Pragma: no-cache" -H "Cache-Control: no-cache" -H "Accept: application/json, text/javascript, */*; q=0.01" -H "Origin: http://beta.stm.info" -H "User-Agent: Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/63.0.3239.132 Safari/537.36" -H "Referer: http://beta.stm.info/fr" -H "Accept-Encoding: gzip, deflate, brv" -H "Accept-Language: pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7,fr-CA;q=0.6,fr;q=0.5,fr-FR;q=0.4" "https://api.stm.info/pub/i3/v1c/api/fr/lines/$1/stops/$2/arrivals?d=$data_atual&t=$hora_atual&direction=$3&wheelchair=0&limit=5&o=web&_=1518793810673" --compressed -s | jq -r -C -S ".result[$4].time")
+for horario in $BUS; do
+	if [ -n $horario ]; then
+		if [ ${#horario} -eq "4" ]; then
+			hora=${horario:0:2}
+			minuto=${horario:2}
+                        output="$output,$hora:$minuto"
+			MQTT=$(mosquitto_pub -t "bus/$1/$2/$channel" -m "$hora:$minuto" -q 1)
+                        if [ $minuto -eq "59" ]; then
+                        	minuto="0"
+				hora=$((hora + 1))
+			else
+				minuto=$((minuto + 1))
+			fi
+
+                        if [ $channel -eq "1" ]; then
+				if [ $real_time -eq "0" ]; then
+					crontab_line="$minuto $hora * * * /home/openhabian/scripts/stmbus/bus 193 51132 W"
+				fi
+			fi
+		else
+			minuto=horario
+                        horario+="m"
+                        output="$output,$horario"
+			MQTT=$(mosquitto_pub -t "bus/$1/$2/$channel" -m "$horario" -q 1)
+			if [ $channel -eq "1" ]; then
+				real_time="1"
+#			 	if [ $((minuto)) -lt 15 ]
+					crontab_line="* * * * *  /home/openhabian/scripts/stmbus/bus 193 51132 W"
+#				else
+#					minuto_atual=${hora_atual:2}
+#					hora_atual=${hora_atual:0:2}
+#
+#					crontab_line="* * * * *  /home/openhabian/scripts/bus 193 51132 W"
+#				fi
+			fi
+		fi
+                channel=$[channel + 1] 
+        fi
+done
+
+output=${output:1}
+
+echo "$output" >> /home/openhabian/scripts/stmbus/bus.log
+echo "$crontab_line" >> /home/openhabian/scripts/stmbus/bus.log
+
+MQTT=$(mosquitto_pub -t "bus/$1/$2" -m "$output" -q 1)
+
+echo "$crontab_line" >> /home/openhabian/scripts/stmbus/crontab.temp
+crontab /home/openhabian/scripts/stmbus/crontab.temp
+
